@@ -1,8 +1,10 @@
 # Mistral Vibe with Channels
 
+This fork of Vibe implements optional channels that lets external services (webhooks, scripts, bots) push messages into a running interactive session. Messages are queued FIFO and delivered as regular user prompts once the current agent turn completes. This work is inspired by Claude Code's Channels (currently in research preview).
+
 ## Local Ingress Channel
 
-This fork of Vibe supports an optional local ingress that lets external services (webhooks, scripts, bots) push messages into a running interactive session. Messages are queued FIFO and delivered as regular user prompts once the current agent turn completes.
+A built-in local ingress available through a Unix domain socket.
 
 ### How it works
 
@@ -33,6 +35,54 @@ echo "summarize the last commit" | socat - UNIX-CONNECT:$HOME/.vibe/run/<session
 ### Architecture
 
 The ingress is transport-agnostic. `IngressRunner` owns the queue and drain loop; `UnixSocketIngress` is one implementation of the `IngressTransport` protocol. Additional transports (HTTP, named pipe, etc.) can be added without changing the runner or the app wiring.
+
+## Telegram Channel
+
+A built-in ingress transport bridges Telegram to Vibe. Inbound messages from allowed users are pushed directly into the session queue. The agent can reply using the built-in `telegram_reply` tool.
+
+Requires the optional extra: `uv add mistral-vibe[telegram]`
+
+### Setup
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) and note the token.
+2. Get your Telegram user ID (e.g. via [@userinfobot](https://t.me/userinfobot)).
+3. Set the bot token as an environment variable: `export TELEGRAM_BOT_TOKEN="<your-token>"`
+4. Add the Telegram section to your `config.toml`:
+
+```toml
+[telegram]
+bot_token_env = "TELEGRAM_BOT_TOKEN"
+allowed_user_ids = [<your-user-id>]
+```
+
+The Telegram bot starts polling when the session mounts and lives for the entire session.
+
+### Inbound messages
+
+Messages from allowed Telegram users are prefixed with metadata and injected into the session:
+
+```
+[telegram:<chat_id>:<message_id>] <message text>
+```
+
+The agent sees these as regular user prompts and can extract the `chat_id` to reply.
+
+### Reply tool
+
+The `reply` tool is automatically available as `telegram_reply` in Vibe:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `chat_id` | `int` | Telegram chat ID (from the inbound message prefix) |
+| `text` | `str` | Reply text (Markdown supported) |
+| `files` | `list[str] \| None` | Optional absolute paths to attach as images/documents |
+
+### Example flow
+
+1. User sends "What's the weather?" on Telegram
+2. Vibe receives: `[telegram:12345:678] What's the weather?`
+3. Agent processes the prompt and calls `telegram_reply(chat_id=12345, text="...")`
+4. The reply appears in the Telegram chat
 
 ---
 

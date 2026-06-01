@@ -45,7 +45,8 @@ from vibe.cli.plan_offer.decide_plan_offer import (
 from vibe.cli.plan_offer.ports.whoami_gateway import WhoAmIGateway, WhoAmIPlanType
 from vibe.cli.terminal_detect import Terminal, detect_terminal
 from vibe.cli.textual_ui.handlers.event_handler import EventHandler
-from vibe.cli.textual_ui.ingress import IngressRunner, UnixSocketIngress
+from vibe.cli.textual_ui.ingress import IngressRunner, TelegramIngress, UnixSocketIngress
+from vibe.cli.textual_ui.ingress._port import IngressTransport
 from vibe.cli.textual_ui.notifications import (
     NotificationContext,
     NotificationPort,
@@ -459,7 +460,7 @@ class VibeApp(App):  # noqa: PLR0904
             ),
             fire=self._handle_user_message,
         )
-        self._ingress_transport: UnixSocketIngress | None = None
+        self._ingress_transports: list[IngressTransport] = []
 
     def _configure_startup_options(self, startup: StartupOptions | None) -> None:
         opts = startup or StartupOptions()
@@ -569,7 +570,7 @@ class VibeApp(App):  # noqa: PLR0904
         await self._resume_history_from_messages()
         self._loop_runner.restore_from_session()
         self._loop_runner.start()
-        if self.config.enable_local_ingress:
+        if self.config.enable_local_ingress or self.config.telegram is not None:
             self._start_ingress()
         await self._check_and_show_whats_new()
         self._schedule_update_notification()
@@ -2258,17 +2259,52 @@ class VibeApp(App):  # noqa: PLR0904
 
     def _start_ingress(self) -> None:
         session_id = self.agent_loop.session_logger.session_id or "default"
-        self._ingress_transport = UnixSocketIngress(
-            self._ingress_runner.queue, session_id=session_id
-        )
-        self._ingress_runner.start()
-        asyncio.create_task(self._ingress_transport.start())
+        queue = self._ingress_runner.queue
+
+        if self.config.enable_local_ingress:
+            unix_transport = UnixSocketIngress(queue, session_id=session_id)
+            self._ingress_transports.append(unix_transport)
+            asyncio.create_task(unix_transport.start())
+
+        telegram_cfg = self.config.telegram
+        if telegram_cfg is not None:
+            telegram_transport = TelegramIngress.from_config(
+                queue,
+                bot_token_env=telegram_cfg.bot_token_env,
+                allowed_user_ids=telegram_cfg.allowed_user_ids,
+            )
+            if telegram_transport is not None:
+                self._ingress_transports.append(telegram_transport)
+                asyncio.create_task(telegram_transport.start())
+                from vibe.core.tools.builtins.telegram_reply import set_telegram_bot
+
+                async def _register_bot_when_ready(t: TelegramIngress) -> None:
+                    await asyncio.sleep(0.5)
+                    set_telegram_bot(t.bot)
+                    self._register_telegram_reply_tool()
+
+                asyncio.create_task(_register_bot_when_ready(telegram_transport))
+
+        if self._ingress_transports:
+            self._ingress_runner.start()
+
+    def _register_telegram_reply_tool(self) -> None:
+        from vibe.core.tools.builtins.telegram_reply import TelegramReplyTool
+
+        tm = self.agent_loop.tool_manager
+        name = TelegramReplyTool.get_name()
+        if name not in tm.registered_tools:
+            with tm._lock:
+                tm._available[name] = TelegramReplyTool
 
     async def _stop_ingress(self) -> None:
         await self._ingress_runner.stop()
-        if self._ingress_transport is not None:
-            await self._ingress_transport.stop()
-            self._ingress_transport = None
+        for transport in self._ingress_transports:
+            await transport.stop()
+        self._ingress_transports.clear()
+        from vibe.core.tools.builtins.telegram_reply import set_telegram_bot
+
+        set_telegram_bot(None)
 
     def _make_default_voice_manager(self) -> VoiceManager:
         try:

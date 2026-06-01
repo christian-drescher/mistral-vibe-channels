@@ -496,6 +496,17 @@ DEFAULT_TTS_MODELS = [
 DEFAULT_THEME = "ansi-dark"
 
 
+class TelegramConfig(BaseModel):
+    bot_token_env: str = Field(
+        default="TELEGRAM_BOT_TOKEN",
+        description="Environment variable holding the Telegram bot token.",
+    )
+    allowed_user_ids: list[int] = Field(
+        default_factory=list,
+        description="Telegram user IDs allowed to send messages.",
+    )
+
+
 class VibeConfig(BaseSettings):
     active_model: str = DEFAULT_ACTIVE_MODEL
     vim_keybindings: bool = False
@@ -522,6 +533,7 @@ class VibeConfig(BaseSettings):
     enable_auto_update: bool = True
     enable_notifications: bool = True
     enable_local_ingress: bool = False
+    telegram: TelegramConfig | None = None
     enable_system_trust_store: bool = False
     api_timeout: float = 720.0
     auto_compact_threshold: int = 200_000
