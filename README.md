@@ -1,3 +1,41 @@
+# Mistral Vibe with Channels
+
+## Local Ingress Channel
+
+This fork of Vibe supports an optional local ingress that lets external services (webhooks, scripts, bots) push messages into a running interactive session. Messages are queued FIFO and delivered as regular user prompts once the current agent turn completes.
+
+### How it works
+
+When enabled, Vibe starts a Unix domain socket at `~/.vibe/run/<session_id>.sock` (permissions `0600`). Any local process owned by the same user can connect, send a UTF-8 message (up to 64 KB), and receive an `ACK\n` response. The message is placed in a bounded queue (max 100) and fired through the same code path as typing in the prompt — the agent sees no difference.
+
+### Enabling
+
+In your `config.toml`:
+
+```toml
+enable_local_ingress = true
+```
+
+### Sending a message
+
+```bash
+echo "summarize the last commit" | socat - UNIX-CONNECT:$HOME/.vibe/run/<session_id>.sock
+```
+
+### Responses
+
+| Response | Meaning |
+|----------|---------|
+| `ACK\n` | Message accepted and queued |
+| `ERR:EMPTY\n` | Empty/whitespace-only payload was rejected |
+| `ERR:QUEUE_FULL\n` | Queue depth limit (100) reached — try again later |
+
+### Architecture
+
+The ingress is transport-agnostic. `IngressRunner` owns the queue and drain loop; `UnixSocketIngress` is one implementation of the `IngressTransport` protocol. Additional transports (HTTP, named pipe, etc.) can be added without changing the runner or the app wiring.
+
+---
+
 # Mistral Vibe
 
 [![PyPI Version](https://img.shields.io/pypi/v/mistral-vibe)](https://pypi.org/project/mistral-vibe)

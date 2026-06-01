@@ -45,6 +45,7 @@ from vibe.cli.plan_offer.decide_plan_offer import (
 from vibe.cli.plan_offer.ports.whoami_gateway import WhoAmIGateway, WhoAmIPlanType
 from vibe.cli.terminal_detect import Terminal, detect_terminal
 from vibe.cli.textual_ui.handlers.event_handler import EventHandler
+from vibe.cli.textual_ui.ingress import IngressRunner, UnixSocketIngress
 from vibe.cli.textual_ui.notifications import (
     NotificationContext,
     NotificationPort,
@@ -452,6 +453,13 @@ class VibeApp(App):  # noqa: PLR0904
             mount=self._mount_and_scroll,
             tools_collapsed=lambda: self._tools_collapsed,
         )
+        self._ingress_runner = IngressRunner(
+            can_fire=lambda: (
+                not self._agent_running and self._current_bottom_app == BottomApp.Input
+            ),
+            fire=self._handle_user_message,
+        )
+        self._ingress_transport: UnixSocketIngress | None = None
 
     def _configure_startup_options(self, startup: StartupOptions | None) -> None:
         opts = startup or StartupOptions()
@@ -561,6 +569,8 @@ class VibeApp(App):  # noqa: PLR0904
         await self._resume_history_from_messages()
         self._loop_runner.restore_from_session()
         self._loop_runner.start()
+        if self.config.enable_local_ingress:
+            self._start_ingress()
         await self._check_and_show_whats_new()
         self._schedule_update_notification()
         if self._is_resuming_session:
@@ -2234,6 +2244,7 @@ class VibeApp(App):  # noqa: PLR0904
     async def _exit_app(self, **kwargs: Any) -> None:
         self._emit_session_closed_for_active_session()
         await self._loop_runner.stop()
+        await self._stop_ingress()
         self._log_reader.shutdown()
         await self._voice_manager.close()
         await self._narrator_manager.close()
@@ -2244,6 +2255,20 @@ class VibeApp(App):  # noqa: PLR0904
             logger.error("Failed to close telemetry client during exit", exc_info=exc)
         finally:
             self.exit(result=self._get_session_resume_info())
+
+    def _start_ingress(self) -> None:
+        session_id = self.agent_loop.session_logger.session_id or "default"
+        self._ingress_transport = UnixSocketIngress(
+            self._ingress_runner.queue, session_id=session_id
+        )
+        self._ingress_runner.start()
+        asyncio.create_task(self._ingress_transport.start())
+
+    async def _stop_ingress(self) -> None:
+        await self._ingress_runner.stop()
+        if self._ingress_transport is not None:
+            await self._ingress_transport.stop()
+            self._ingress_transport = None
 
     def _make_default_voice_manager(self) -> VoiceManager:
         try:
@@ -2964,6 +2989,7 @@ class VibeApp(App):  # noqa: PLR0904
             self._bash_task.cancel()
         self._remote_manager.cancel_stream_task()
 
+        await self._stop_ingress()
         self._log_reader.shutdown()
         self._narrator_manager.cancel()
         await self.agent_loop.aclose()
