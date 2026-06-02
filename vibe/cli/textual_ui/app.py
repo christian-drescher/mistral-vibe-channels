@@ -48,6 +48,7 @@ from vibe.cli.terminal_detect import Terminal, detect_terminal
 from vibe.cli.textual_ui.handlers.event_handler import EventHandler
 from vibe.cli.textual_ui.ingress import (
     IngressRunner,
+    SchedulerIngress,
     TelegramIngress,
     UnixSocketIngress,
 )
@@ -576,7 +577,11 @@ class VibeApp(App):  # noqa: PLR0904
         await self._resume_history_from_messages()
         self._loop_runner.restore_from_session()
         self._loop_runner.start()
-        if self.config.enable_local_ingress or self.config.telegram is not None:
+        if (
+            self.config.enable_local_ingress
+            or self.config.telegram is not None
+            or self.config.scheduler is not None
+        ):
             self._start_ingress()
         await self._check_and_show_whats_new()
         self._schedule_update_notification()
@@ -2280,6 +2285,16 @@ class VibeApp(App):  # noqa: PLR0904
             unix_transport = UnixSocketIngress(queue, session_id=session_id)
             self._ingress_transports.append(unix_transport)
             asyncio.create_task(unix_transport.start())
+
+        scheduler_cfg = self.config.scheduler
+        if scheduler_cfg is not None:
+            from pathlib import Path
+
+            scheduler_transport = SchedulerIngress(
+                queue, jobs_dir=Path(scheduler_cfg.jobs_dir)
+            )
+            self._ingress_transports.append(scheduler_transport)
+            asyncio.create_task(scheduler_transport.start())
 
         telegram_cfg = self.config.telegram
         if telegram_cfg is not None:

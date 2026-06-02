@@ -496,6 +496,13 @@ DEFAULT_TTS_MODELS = [
 DEFAULT_THEME = "ansi-dark"
 
 
+class SchedulerConfig(BaseModel):
+    jobs_dir: str = Field(
+        default="jobs",
+        description="Directory containing scheduler job .md files (relative to cwd).",
+    )
+
+
 class TelegramConfig(BaseModel):
     bot_token_env: str = Field(
         default="TELEGRAM_BOT_TOKEN",
@@ -533,6 +540,7 @@ class VibeConfig(BaseSettings):
     enable_auto_update: bool = True
     enable_notifications: bool = True
     enable_local_ingress: bool = False
+    scheduler: SchedulerConfig | None = None
     telegram: TelegramConfig | None = None
     enable_system_trust_store: bool = False
     api_timeout: float = 720.0

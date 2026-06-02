@@ -1,6 +1,16 @@
 # Mistral Vibe with Channels
 
-This fork of Vibe implements optional channels that lets external services (webhooks, scripts, bots) push messages into a running interactive session. Messages are queued FIFO and delivered as regular user prompts once the current agent turn completes. This work is inspired by Claude Code's Channels (currently in research preview).
+This fork of Vibe adds **channels** — pluggable ingress transports that let external sources push messages into a running session without manual interaction. Messages are queued FIFO and delivered as regular user prompts once the current agent turn completes, so the agent treats them identically to typed input. Channels enable autonomous workflows: scheduled jobs, chatbot bridges, webhook relays, and inter-process orchestration.
+
+| Channel | Transport | Direction | Use case |
+|---------|-----------|-----------|----------|
+| [Local Ingress](#local-ingress-channel) | Unix socket | External → Agent | Scripts, webhooks, CI pipelines pushing one-off messages |
+| [Telegram](#telegram-channel) | Telegram Bot API | Bidirectional | Mobile/remote chat interface with file attachments |
+| [Scheduler](#scheduler-channel) | Cron (local filesystem) | Timer → Agent | Recurring tasks: standups, health checks, reminders |
+
+When combined, these channels transform Vibe into a fully autonomous assistant: **Telegram** provides a bidirectional interface reachable from anywhere, the **Scheduler** drives recurring tasks without human prompting, a custom system prompt (`SOUL.md`) defines the agent's personality and long-term goals, and an auto-memory skill lets the agent persist learnings across sessions by writing its own notes. Together, they enable an always-on agent that acts on its own schedule, communicates proactively, and improves over time.
+
+> This turns Mistral Vibe CLI into an OpenClaw version built into your Mistral Vibe CLI.
 
 ## Local Ingress Channel
 
@@ -97,6 +107,77 @@ The `reply` tool is automatically available as `telegram_reply` in Vibe:
 2. Vibe receives: `[telegram:12345:2026-06-02 14:30] What's the weather?`
 3. Agent processes the prompt and calls `telegram_reply(chat_id=12345, text="...")`
 4. The reply appears in the Telegram chat
+
+## Scheduler Channel
+
+A built-in cron-based scheduler that fires job messages into the session on a recurring schedule. Jobs are defined as Markdown files with YAML frontmatter containing a cron expression.
+
+### Setup
+
+Create a `jobs/` directory (relative to where Vibe is started) and enable the scheduler in your `config.toml`:
+
+```toml
+[scheduler]
+jobs_dir = "jobs"
+```
+
+### Defining jobs
+
+Each `.md` file in the jobs directory represents a scheduled job. The file must have YAML frontmatter with a `schedule` field containing a standard 5-field cron expression:
+
+```markdown
+---
+schedule: "0 9 * * 1-5"
+---
+Write a daily standup summary based on yesterday's git commits.
+```
+
+The filename (without `.md`) becomes the job name used in the message prefix.
+
+### Cron syntax
+
+Standard 5-field cron expressions are supported:
+
+```
+┌───────────── minute (0–59)
+│ ┌───────────── hour (0–23)
+│ │ ┌───────────── day of month (1–31)
+│ │ │ ┌───────────── month (1–12)
+│ │ │ │ ┌───────────── day of week (0–6, Sunday=0)
+│ │ │ │ │
+* * * * *
+```
+
+Supported field syntax: `*` (any), `*/N` (step), `N-M` (range), `N,M,O` (list), exact values.
+
+### How it works
+
+The scheduler checks all jobs once per minute. When a job's cron expression matches the current time, its body is injected into the session queue as:
+
+```
+[scheduler:<job_name>:<YYYY-MM-DD HH:MM>]
+<body>
+```
+
+Each job fires at most once per minute (deduplicated). Files with missing or malformed frontmatter are skipped with a warning.
+
+### Example jobs
+
+**Daily standup reminder** (`jobs/standup.md`):
+```markdown
+---
+schedule: "0 9 * * 1-5"
+---
+Summarize yesterday's git log and write standup notes.
+```
+
+**Hourly health check** (`jobs/health-check.md`):
+```markdown
+---
+schedule: "0 * * * *"
+---
+Run `curl -s http://localhost:8080/health` and report any issues.
+```
 
 ---
 
