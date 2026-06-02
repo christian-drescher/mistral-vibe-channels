@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import datetime
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from vibe.core.logger import logger
 
 if TYPE_CHECKING:
-    from telegram import Bot
+    from telegram import Bot, File as TelegramFile
 
 
 def _check_telegram_available() -> bool:
@@ -18,6 +19,20 @@ def _check_telegram_available() -> bool:
         return True
     except ImportError:
         return False
+
+
+def _unique_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    stem = path.stem
+    suffix = path.suffix
+    parent = path.parent
+    counter = 1
+    while True:
+        candidate = parent / f"{stem}({counter}){suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
 
 
 class TelegramIngress:
@@ -68,6 +83,13 @@ class TelegramIngress:
 
         return cls(queue, bot_token=token, allowed_user_ids=set(allowed_user_ids))
 
+    async def _download_file(self, tg_file: TelegramFile, filename: str) -> Path:
+        inbox = Path.cwd() / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        dest = _unique_path(inbox / filename)
+        await tg_file.download_to_drive(custom_path=dest)
+        return dest
+
     async def start(self) -> None:
         from telegram import Update
         from telegram.ext import Application, MessageHandler, filters
@@ -81,19 +103,45 @@ class TelegramIngress:
             if update.effective_user.id not in self._allowed_user_ids:
                 return
             text = update.message.text or update.message.caption or ""
-            if not text.strip():
-                return
             chat_id = update.effective_chat.id if update.effective_chat else "?"
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
             prefix = f"[telegram:{chat_id}:{timestamp}] "
+
+            attached: list[str] = []
+            msg = update.message
+
+            if msg.document:
+                tg_file = await msg.document.get_file()
+                filename = (
+                    msg.document.file_name or f"document_{msg.document.file_unique_id}"
+                )
+                dest = await self._download_file(tg_file, filename)
+                attached.append(f"inbox/{dest.name}")
+
+            if msg.photo:
+                largest = msg.photo[-1]
+                tg_file = await largest.get_file()
+                filename = f"photo_{largest.file_unique_id}.jpg"
+                dest = await self._download_file(tg_file, filename)
+                attached.append(f"inbox/{dest.name}")
+
+            if not text.strip() and not attached:
+                return
+
             content = prefix + text
+            for path in attached:
+                content += f"\n[attached: {path}]"
+
             if self._queue.full():
                 logger.warning("Telegram ingress: queue full, dropping message")
                 return
             await self._queue.put(content)
 
         self._app.add_handler(
-            MessageHandler(filters.TEXT | filters.CAPTION, on_message)
+            MessageHandler(
+                filters.TEXT | filters.CAPTION | filters.Document.ALL | filters.PHOTO,
+                on_message,
+            )
         )
 
         await self._app.initialize()

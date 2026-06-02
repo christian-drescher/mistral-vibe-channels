@@ -62,10 +62,24 @@ The Telegram bot starts polling when the session mounts and lives for the entire
 Messages from allowed Telegram users are prefixed with metadata and injected into the session:
 
 ```
-[telegram:<chat_id>:<message_id>] <message text>
+[telegram:<chat_id>:<timestamp>] <message text>
 ```
 
 The agent sees these as regular user prompts and can extract the `chat_id` to reply.
+
+### File attachments
+
+Documents and photos attached to Telegram messages are automatically downloaded into an `inbox/` directory relative to where Vibe was started. The downloaded file paths are appended to the message:
+
+```
+[telegram:12345:2026-06-02 14:30] Check this report
+[attached: inbox/report.pdf]
+```
+
+- **Documents**: saved with their original filename.
+- **Photos**: saved as `photo_<unique_id>.jpg`.
+- If a file with the same name already exists, a numeric suffix is appended (e.g. `report(1).pdf`).
+- Messages with only a file attachment (no text) are still forwarded to the agent.
 
 ### Reply tool
 
@@ -80,7 +94,7 @@ The `reply` tool is automatically available as `telegram_reply` in Vibe:
 ### Example flow
 
 1. User sends "What's the weather?" on Telegram
-2. Vibe receives: `[telegram:12345:678] What's the weather?`
+2. Vibe receives: `[telegram:12345:2026-06-02 14:30] What's the weather?`
 3. Agent processes the prompt and calls `telegram_reply(chat_id=12345, text="...")`
 4. The reply appears in the Telegram chat
 
