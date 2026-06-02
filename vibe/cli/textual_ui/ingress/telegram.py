@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -83,7 +84,8 @@ class TelegramIngress:
             if not text.strip():
                 return
             chat_id = update.effective_chat.id if update.effective_chat else "?"
-            prefix = f"[telegram:{chat_id}:{update.message.message_id}] "
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            prefix = f"[telegram:{chat_id}:{timestamp}] "
             content = prefix + text
             if self._queue.full():
                 logger.warning("Telegram ingress: queue full, dropping message")

@@ -53,10 +53,11 @@ class TelegramReplyTool(
 ):
     description: ClassVar[str] = (
         "Reply to a Telegram chat. "
-        "When a user message is prefixed with [telegram:<chat_id>:<message_id>], "
-        "it originated from Telegram. Your normal text output does NOT reach that "
+        "When a user message is prefixed with [telegram:<chat_id>:<timestamp>], "
+        "it originated from Telegram. The timestamp is the local arrival time "
+        "(YYYY-MM-DD HH:MM). Your normal text output does NOT reach that "
         "user — you MUST call this tool to respond. "
-        "Extract the chat_id from the prefix: [telegram:1234567890:123] → "
+        "Extract the chat_id from the prefix: [telegram:1234567890:2026-06-02 14:30] → "
         "chat_id=1234567890. "
         "The `text` parameter supports Telegram MarkdownV2 formatting. "
         "Optionally attach files via `files` (list of absolute paths); "
