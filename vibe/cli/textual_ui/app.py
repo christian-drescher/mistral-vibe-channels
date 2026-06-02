@@ -9,6 +9,7 @@ from enum import StrEnum, auto
 import gc
 import os
 from pathlib import Path
+import re
 import signal
 import time
 from typing import Any, ClassVar, assert_never, cast
@@ -45,7 +46,11 @@ from vibe.cli.plan_offer.decide_plan_offer import (
 from vibe.cli.plan_offer.ports.whoami_gateway import WhoAmIGateway, WhoAmIPlanType
 from vibe.cli.terminal_detect import Terminal, detect_terminal
 from vibe.cli.textual_ui.handlers.event_handler import EventHandler
-from vibe.cli.textual_ui.ingress import IngressRunner, TelegramIngress, UnixSocketIngress
+from vibe.cli.textual_ui.ingress import (
+    IngressRunner,
+    TelegramIngress,
+    UnixSocketIngress,
+)
 from vibe.cli.textual_ui.ingress._port import IngressTransport
 from vibe.cli.textual_ui.notifications import (
     NotificationContext,
@@ -461,6 +466,7 @@ class VibeApp(App):  # noqa: PLR0904
             fire=self._handle_user_message,
         )
         self._ingress_transports: list[IngressTransport] = []
+        self._telegram_transport: TelegramIngress | None = None
 
     def _configure_startup_options(self, startup: StartupOptions | None) -> None:
         opts = startup or StartupOptions()
@@ -1429,10 +1435,17 @@ class VibeApp(App):  # noqa: PLR0904
                     event, loading_widget=self._loading_widget
                 )
 
+    _TELEGRAM_PREFIX_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"^\[telegram:(\d+):\d+\]"
+    )
+
     async def _handle_agent_loop_turn(
         self, prompt: str, *, title_source: str | None = None
     ) -> None:
         self._agent_running = True
+
+        if self._telegram_transport and (m := self._TELEGRAM_PREFIX_RE.match(prompt)):
+            self._telegram_transport.start_typing(int(m.group(1)))
 
         await self._remove_loading_widget()
 
@@ -1495,6 +1508,8 @@ class VibeApp(App):  # noqa: PLR0904
                 ErrorMessage(message, collapsed=self._tools_collapsed)
             )
         finally:
+            if self._telegram_transport:
+                self._telegram_transport.stop_typing()
             self._narrator_manager.on_turn_end()
             self._agent_running = False
             self._interrupt_requested = False
@@ -2275,6 +2290,7 @@ class VibeApp(App):  # noqa: PLR0904
             )
             if telegram_transport is not None:
                 self._ingress_transports.append(telegram_transport)
+                self._telegram_transport = telegram_transport
                 asyncio.create_task(telegram_transport.start())
                 from vibe.core.tools.builtins.telegram_reply import set_telegram_bot
 
